@@ -1,89 +1,107 @@
-# main_intrusion.py
+# model_training.py
 
-# 🔹 Imports
 import pandas as pd
 import numpy as np
-import tensorflow as tf
-from tensorflow.keras.models import Sequential, load_model
-from tensorflow.keras.layers import Dense, Conv1D, MaxPooling1D, Dropout, Bidirectional, LSTM
-from sklearn.preprocessing import LabelEncoder, MinMaxScaler
-from sklearn.model_selection import train_test_split
 import os
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder, MinMaxScaler
+from sklearn.metrics import classification_report, confusion_matrix
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv1D, Bidirectional, LSTM, Dense, Dropout, Flatten
+from tensorflow.keras.utils import to_categorical
 
-# 🔹 Function: Load dataset from CSV (URL or Drive)
-def load_dataset(path, column_names=None):
-    print(f"[INFO] Loading dataset from: {path}")
-    df = pd.read_csv(path, names=column_names) if column_names else pd.read_csv(path)
-    return df
+# ----------------- Data Loading & Preprocessing -----------------
+def load_and_preprocess(path):
+    df = pd.read_csv(path, low_memory=False)
 
-# 🔹 Function: Preprocess dataset
-def preprocess_data(df, label_column='label'):
-    df = df.dropna()  # Drop rows with missing values
-    
-    # Encode labels (e.g., 'attack' → 1, 'normal' → 0)
+    # Drop unnamed/constant columns
+    df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
+    df = df.dropna(axis=1, how='all')
+    df = df.loc[:, df.apply(pd.Series.nunique) > 1]
+    df.dropna(how='all', inplace=True)
+
+    # Find target column
+    possible_targets = ['label', 'Label', 'attack_cat', 'Attack_cat',
+                        'class', 'Class', 'target', 'Target', 'Output']
+    target_col = next((col for col in df.columns if col.strip() in possible_targets), None)
+    if target_col is None:
+        raise ValueError("❌ Target column not found. Please ensure dataset has a label column.")
+
+    # Encode target labels
+    df[target_col] = df[target_col].astype(str).str.strip().str.lower()
     label_encoder = LabelEncoder()
-    df[label_column] = label_encoder.fit_transform(df[label_column])
+    y = label_encoder.fit_transform(df[target_col])
+    y = to_categorical(y)
 
-    # Separate features and labels
-    X = df.drop(columns=[label_column])
-    y = df[label_column]
+    # Drop non-numeric + target columns
+    X = df.drop(columns=[target_col])
+    X = X.select_dtypes(include=[np.number])
 
-    # Normalize feature values between 0 and 1
+    # Fill missing values
+    X.fillna(0, inplace=True)
+
+    # Scale features
     scaler = MinMaxScaler()
     X_scaled = scaler.fit_transform(X)
-    
-    # Reshape for Conv1D input (samples, features, channels)
-    X_scaled = X_scaled.reshape(X_scaled.shape[0], X_scaled.shape[1], 1)
 
+    # Reshape for Conv1D input
+    X_scaled = X_scaled.reshape(X_scaled.shape[0], X_scaled.shape[1], 1)
     return X_scaled, y, scaler, label_encoder
 
-# 🔹 Function: Build Hybrid Conv1D + BiLSTM Model
-def build_model(input_shape):
-    model = Sequential([
-        # Conv1D: learns local patterns in features
-        Conv1D(64, kernel_size=3, activation='relu', input_shape=input_shape),
-        
-        # MaxPooling: reduces dimensions
-        MaxPooling1D(pool_size=2),
-        
-        # BiLSTM: learns temporal relationships in both directions
-        Bidirectional(LSTM(64)),
-        
-        # Dropout for regularization
-        Dropout(0.3),
-        Dense(64, activation='relu'),
-        Dropout(0.3),
-        
-        # Output: sigmoid activation for binary classification (attack vs normal)
-        Dense(1, activation='sigmoid')
-    ])
-    
-    # Compile model with loss and optimizer
-    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+
+# ----------------- Model Definition -----------------
+def build_model(input_shape, num_classes):
+    model = Sequential()
+    model.add(Conv1D(64, kernel_size=3, activation='relu', input_shape=input_shape))
+    model.add(Bidirectional(LSTM(64, return_sequences=True)))
+    model.add(Flatten())
+    model.add(Dropout(0.3))
+    model.add(Dense(64, activation='relu'))
+    model.add(Dense(num_classes, activation='softmax'))
+    model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
     return model
 
-# 🔹 Function: Train model and save to .h5 file
-def train_model(path, column_names=None, label_column='label', model_name='model_trained.h5'):
-    # Step 1: Load and preprocess dataset
-    df = load_dataset(path, column_names)
-    X, y, scaler, encoder = preprocess_data(df, label_column)
 
-    # Step 2: Train-test split
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+# ----------------- Training + Evaluation -----------------
+def train_model(path, model_name="intrusion_model.h5"):
+    print(f"📥 Loading dataset from: {path}")
+    X, y, scaler, label_encoder = load_and_preprocess(path)
 
-    # Step 3: Build and train the model
-    model = build_model(input_shape=(X_train.shape[1], 1))
-    print("[INFO] Training the model...")
-    model.fit(X_train, y_train, epochs=10, batch_size=128, validation_data=(X_test, y_test))
+    # Split data
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y
+    )
 
-    # Step 4: Save the model
+    # Build model
+    model = build_model(X_train.shape[1:], y.shape[1])
+
+    # Train
+    print("🚀 Training model...")
+    history = model.fit(
+        X_train, y_train,
+        epochs=10,
+        batch_size=64,
+        validation_data=(X_test, y_test),
+        verbose=1
+    )
+
+    # Evaluate
+    print("\n📊 Evaluating model on test data...")
+    test_loss, test_acc = model.evaluate(X_test, y_test, verbose=0)
+    print(f"✅ Test Accuracy: {test_acc:.4f}")
+
+    # Classification Report
+    y_pred = model.predict(X_test)
+    y_pred_classes = np.argmax(y_pred, axis=1)
+    y_true = np.argmax(y_test, axis=1)
+
+    print("\n📊 Classification Report:")
+    print(classification_report(y_true, y_pred_classes))
+
+    print("\n🔹 Confusion Matrix:")
+    print(confusion_matrix(y_true, y_pred_classes))
+
+    # Save model
     os.makedirs("models", exist_ok=True)
     model.save(f"models/{model_name}")
-    print(f"[✅] Model saved as: models/{model_name}")
-
-# 🔹 Function: Load trained model and predict from input sample
-def predict(sample, model_path):
-    model = load_model(model_path)
-    sample = np.array(sample).reshape(1, -1, 1)  # Reshape for prediction
-    pred = model.predict(sample)
-    return pred
+    print(f"\n💾 Model saved as: models/{model_name}")
