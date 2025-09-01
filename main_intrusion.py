@@ -9,6 +9,7 @@ from sklearn.metrics import classification_report, confusion_matrix
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Conv1D, Bidirectional, LSTM, Dense, Dropout, Flatten
 from tensorflow.keras.utils import to_categorical
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
 
 # ----------------- Data Loading & Preprocessing -----------------
 def load_and_preprocess(path):
@@ -75,6 +76,20 @@ def train_model(path, model_name="intrusion_model.h5"):
     # Build model
     model = build_model(X_train.shape[1:], y.shape[1])
 
+    # --- Callbacks ---
+    early_stop = EarlyStopping(
+        monitor="val_loss",        # watch validation loss
+        patience=3,                # stop if no improvement for 3 epochs
+        restore_best_weights=True  # roll back to best model
+    )
+
+    checkpoint = ModelCheckpoint(
+        filepath=f"models/{model_name}",  # auto-save best model
+        monitor="val_loss",
+        save_best_only=True,
+        verbose=1
+    )
+
     # Train
     print("🚀 Training model...")
     history = model.fit(
@@ -82,7 +97,8 @@ def train_model(path, model_name="intrusion_model.h5"):
         epochs=10,
         batch_size=64,
         validation_data=(X_test, y_test),
-        verbose=1
+        verbose=1,
+        callbacks=[early_stop, checkpoint] 
     )
 
     # Evaluate
