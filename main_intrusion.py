@@ -64,33 +64,45 @@ def build_model(input_shape, num_classes):
 
 
 # ----------------- Training + Evaluation -----------------
-def train_model(path, model_name="intrusion_model.h5"):
-    print(f"📥 Loading dataset from: {path}")
-    X, y, scaler, label_encoder = load_and_preprocess(path)
+def train_model(path_or_data, model_name="intrusion_model.h5"):
+    
+    # ----------------- Load dataset -----------------
+    if isinstance(path_or_data, str):
+        # CSV path: use existing preprocessing
+        print(f"📥 Loading dataset from: {path_or_data}")
+        X, y, scaler, label_encoder = load_and_preprocess(path_or_data)
+    else:
+        # Tuple of preprocessed arrays from .npz
+        print(f"📥 Loading dataset from preprocessed arrays")
+        X, y = path_or_data
+        from tensorflow.keras.utils import to_categorical
+        y = to_categorical(y)
+        scaler = None
+        label_encoder = None
 
-    # Split data
+    # ----------------- Split data -----------------
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42, stratify=y
     )
 
-    # Build model
+    # ----------------- Build model -----------------
     model = build_model(X_train.shape[1:], y.shape[1])
 
-    # --- Callbacks ---
+    # ----------------- Callbacks -----------------
     early_stop = EarlyStopping(
-        monitor="val_loss",        # watch validation loss
-        patience=3,                # stop if no improvement for 3 epochs
-        restore_best_weights=True  # roll back to best model
+        monitor="val_loss",
+        patience=3,
+        restore_best_weights=True
     )
 
     checkpoint = ModelCheckpoint(
-        filepath=f"models/{model_name}",  # auto-save best model
+        filepath=f"models/{model_name}",
         monitor="val_loss",
         save_best_only=True,
         verbose=1
     )
 
-    # Train
+    # ----------------- Train model -----------------
     print("🚀 Training model...")
     history = model.fit(
         X_train, y_train,
@@ -98,15 +110,15 @@ def train_model(path, model_name="intrusion_model.h5"):
         batch_size=64,
         validation_data=(X_test, y_test),
         verbose=1,
-        callbacks=[early_stop, checkpoint] 
+        callbacks=[early_stop, checkpoint]
     )
 
-    # Evaluate
+    # ----------------- Evaluate model -----------------
     print("\n📊 Evaluating model on test data...")
     test_loss, test_acc = model.evaluate(X_test, y_test, verbose=0)
     print(f"✅ Test Accuracy: {test_acc:.4f}")
 
-    # Classification Report
+    # ----------------- Classification report -----------------
     y_pred = model.predict(X_test)
     y_pred_classes = np.argmax(y_pred, axis=1)
     y_true = np.argmax(y_test, axis=1)
@@ -117,7 +129,7 @@ def train_model(path, model_name="intrusion_model.h5"):
     print("\n🔹 Confusion Matrix:")
     print(confusion_matrix(y_true, y_pred_classes))
 
-    # Save model
+    # ----------------- Save model -----------------
     os.makedirs("models", exist_ok=True)
     model.save(f"models/{model_name}")
     print(f"\n💾 Model saved as: models/{model_name}")
