@@ -20,11 +20,16 @@ def load_and_preprocess(path):
     df = df.dropna(axis=1, how='all')
     df = df.loc[:, df.apply(pd.Series.nunique) > 1]
     df.dropna(how='all', inplace=True)
-
-    # Find target column
-    possible_targets = ['label', 'Label', 'attack_cat', 'Attack_cat',
-                        'class', 'Class', 'target', 'Target', 'Output']
-    target_col = next((col for col in df.columns if col.strip() in possible_targets), None)
+    # ----------------- Find target column -----------------
+    # Normalize column names
+    df.columns = df.columns.str.strip().str.lower()
+    
+    # Define target candidates
+    possible_targets = ["label", "class", "target", "attack_cat", "type"]
+    
+    # Find the target column
+    target_col = next((col for col in df.columns if col in possible_targets), None)
+    
     if target_col is None:
         raise ValueError("❌ Target column not found. Please ensure dataset has a label column.")
 
