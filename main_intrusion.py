@@ -77,13 +77,21 @@ def train_model(path_or_data, model_name="intrusion_model.h5"):
         print(f"📥 Loading dataset from: {path_or_data}")
         X, y, scaler, label_encoder = load_and_preprocess(path_or_data)
     else:
-        # Tuple of preprocessed arrays from .npz
-        print(f"📥 Loading dataset from preprocessed arrays")
-        X, y = path_or_data
-        from tensorflow.keras.utils import to_categorical
-        y = to_categorical(y)
-        scaler = None
-        label_encoder = None
+    # Tuple of preprocessed arrays from .npz
+      print(f"📥 Loading dataset from preprocessed arrays")
+      X, y = path_or_data
+      # y is already one-hot, do NOT call to_categorical
+      scaler = None
+      label_encoder = None
+
+      # Convert y to 1D for stratify
+      stratify_labels = np.argmax(y, axis=1)
+
+      # Split data
+      from sklearn.model_selection import train_test_split
+      X_train, X_test, y_train, y_test = train_test_split(
+          X, y, test_size=0.2, random_state=42, stratify=stratify_labels
+    )
 
     # ----------------- Split data -----------------
     X_train, X_test, y_train, y_test = train_test_split(
